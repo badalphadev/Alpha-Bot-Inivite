@@ -1,0 +1,12 @@
+{
+    "token": "SEU_TOKEN_DO_DISCORD_AQUI",
+    "link_convite": "https://discord.gg/seu-link-de-convite",
+    "mensagem": "🔥 **Bem-vindo à Alpha Store!** 🔥\n\nOs melhores **scripts para League of Legends** com **preços competitivos** estão aqui! 🏆 Aproveite agora e resgate sua **key trial gratuita por tempo limitado**! ⏳\n\n💻 **Garanta sua vantagem no jogo hoje mesmo!** 🚀\n\n🔗 Acesse agora: [Alpha Store]",
+    "intervalo_minimo": 50,
+    "intervalo_maximo": 60,
+    "maximo_convites_por_hora": 50,
+    "maximo_convites_por_dia": 50,
+    "horario_inicial": "08:00",
+    "horario_final": "20:00",
+    "pausa_aleatoria": true
+} 

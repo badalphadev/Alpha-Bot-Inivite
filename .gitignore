@@ -1,0 +1,23 @@
+# Arquivos de instalação
+Git-Installer.exe
+baixar-git.ps1
+
+# Arquivos de log e dados sensíveis
+log.txt
+contatos_convidados.txt
+contatos_convidados_detalhes.json
+
+# Arquivos de configuração com tokens ou dados pessoais
+config.json
+
+# Arquivos temporários
+*.tmp
+*.bak
+
+# Arquivos do sistema
+Thumbs.db
+.DS_Store
+
+# Scripts temporários de instalação
+comitar-github.ps1
+ComitarParaGitHub.bat 
