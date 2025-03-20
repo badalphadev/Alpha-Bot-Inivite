@@ -1,4 +1,4 @@
-﻿# Alpha Bot Invite
+# Alpha Bot Invite
 
 Bot automatizado para envio de convites via Discord com proteÃ§Ãµes contra ban.
 
