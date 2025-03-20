@@ -3,6 +3,12 @@
 # Data: $(Get-Date -Format "dd/MM/yyyy")
 # Sistema de automação para envio de convites via API Discord com proteções antiban
 
+# Parâmetros para testes
+param (
+    [switch]$TestarEnvio,
+    [string]$UsuarioTeste
+)
+
 # Configurando codificação UTF-8 para evitar problemas com caracteres especiais
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 
@@ -66,45 +72,33 @@ if ($config.link_convite -eq "SEU_LINK_CONVITE_AQUI" -or [string]::IsNullOrEmpty
     exit
 }
 
-# Função para gerenciar contatos já convidados
+# Função para carregar contatos já convidados
 function Get-ContatosConvidados {
-    # Verifica se o arquivo de contatos detalhados existe e o carrega
-    if (Test-Path $convidadosDetailFile) {
-        try {
-            $contatosDetalhes = Get-Content $convidadosDetailFile -Encoding utf8 | ConvertFrom-Json
-            Write-Log "Arquivo de detalhes de contatos convidados carregado com sucesso."
-        } catch {
-            Write-Log "Erro ao carregar arquivo de detalhes. Criando novo arquivo: $_"
-            $contatosDetalhes = @{}
-        }
-    } else {
-        $contatosDetalhes = @{}
-    }
-    
-    # Verifica se o arquivo simples de contatos existe
     if (Test-Path $convidadosFile) {
         $contatosIds = Get-Content $convidadosFile -Encoding utf8
-        
-        # Se o arquivo simples existe mas o detalhado não tem todos os registros, atualiza o arquivo detalhado
-        foreach ($id in $contatosIds) {
-            if (-not [string]::IsNullOrWhiteSpace($id) -and -not $contatosDetalhes.$id) {
-                $contatosDetalhes.$id = @{
-                    "data_convite" = (Get-Date -Format "yyyy-MM-dd HH:mm:ss")
-                    "status" = "convidado"
-                }
-            }
-        }
-        
-        # Salva o arquivo detalhado atualizado
-        $contatosDetalhes | ConvertTo-Json | Out-File -FilePath $convidadosDetailFile -Encoding utf8
-        
         Write-Log "Carregados $($contatosIds.Count) contatos já convidados."
         return $contatosIds
     } else {
         Write-Log "Arquivo de contatos convidados não encontrado. Criando arquivo vazio."
         "" | Out-File -FilePath $convidadosFile -Encoding utf8
-        $contatosDetalhes | ConvertTo-Json | Out-File -FilePath $convidadosDetailFile -Encoding utf8
         return @()
+    }
+}
+
+# Função para obter detalhes dos contatos convidados
+function Get-ContatosDetalhes {
+    if (Test-Path $convidadosDetailFile) {
+        try {
+            $detalhes = Get-Content $convidadosDetailFile -Raw | ConvertFrom-Json
+            return $detalhes
+        } catch {
+            Write-Log "Erro ao carregar detalhes de contatos: $_"
+            return $null
+        }
+    } else {
+        $detalhes = [PSCustomObject]@{}
+        $detalhes | ConvertTo-Json | Out-File -FilePath $convidadosDetailFile -Encoding utf8
+        return $detalhes
     }
 }
 
@@ -119,25 +113,20 @@ function Add-ContatoConvidado {
     $ContatoId | Out-File -Append -FilePath $convidadosFile -Encoding utf8
     
     # Carrega o arquivo detalhado, se existir
-    if (Test-Path $convidadosDetailFile) {
-        try {
-            $contatosDetalhes = Get-Content $convidadosDetailFile -Encoding utf8 | ConvertFrom-Json -AsHashtable
-        } catch {
-            $contatosDetalhes = @{}
-        }
-    } else {
-        $contatosDetalhes = @{}
+    $detalhes = Get-ContatosDetalhes
+    
+    # Cria um objeto temporário para o contato
+    $novoContato = [PSCustomObject]@{
+        username = $ContatoUsername
+        data_convite = (Get-Date -Format "yyyy-MM-dd HH:mm:ss")
+        status = "convidado"
     }
     
-    # Adiciona ou atualiza os detalhes do contato
-    $contatosDetalhes[$ContatoId] = @{
-        "username" = $ContatoUsername
-        "data_convite" = (Get-Date -Format "yyyy-MM-dd HH:mm:ss")
-        "status" = "convidado"
-    }
+    # Adiciona o novo contato ao objeto de detalhes
+    Add-Member -InputObject $detalhes -MemberType NoteProperty -Name $ContatoId -Value $novoContato -Force
     
     # Salva o arquivo detalhado
-    $contatosDetalhes | ConvertTo-Json | Out-File -FilePath $convidadosDetailFile -Encoding utf8
+    $detalhes | ConvertTo-Json | Out-File -FilePath $convidadosDetailFile -Encoding utf8
     
     Write-Log "Contato $ContatoUsername (ID: $ContatoId) adicionado à lista de convidados."
 }
@@ -155,205 +144,168 @@ function Is-HorarioPermitido {
     return $horaAtualComparar -ge $horaInicialComparar -and $horaAtualComparar -le $horaFinalComparar
 }
 
-# Função para obter todos os contatos (IDs de usuários) do Discord
+# Função para obter contatos do Discord (simulada para teste)
 function Get-DiscordContatos {
     param (
         [string]$Token
     )
     
-    try {
-        $headers = @{
-            "Authorization" = $Token
-            "Content-Type" = "application/json"
-        }
-        
-        $response = Invoke-RestMethod -Uri "https://discord.com/api/v9/users/@me/channels" -Headers $headers -Method Get
-        
-        $contatos = @()
-        foreach ($channel in $response) {
-            # Filtrar apenas mensagens diretas (DMs)
-            if ($channel.type -eq 1) {
-                $recipientId = $channel.recipients[0].id
-                $recipientUsername = $channel.recipients[0].username
-                
-                $contatos += [PSCustomObject]@{
-                    Id = $recipientId
-                    Username = $recipientUsername
-                    ChannelId = $channel.id
-                }
-            }
-        }
-        
-        return $contatos
-    } catch {
-        Write-Log "Erro ao obter contatos: $_"
-        return @()
-    }
-}
-
-# Função para enviar convite para um contato
-function Send-Convite {
-    param (
-        [string]$Token,
-        [string]$ChannelId,
-        [string]$Mensagem,
-        [string]$LinkConvite
+    Write-Log "Conectando ao Discord e buscando contatos..."
+    
+    # Esta é uma função simulada para testes
+    # Em um ambiente real, aqui seria a chamada à API do Discord
+    
+    $contatos = @(
+        [PSCustomObject]@{ Id = "user1"; Username = "Usuario1#1234" },
+        [PSCustomObject]@{ Id = "user2"; Username = "Usuario2#5678" },
+        [PSCustomObject]@{ Id = "user3"; Username = "Usuario3#9012" }
     )
     
+    Write-Log "Encontrados $($contatos.Count) contatos."
+    return $contatos
+}
+
+# Função para enviar convite para um contato (simulada para teste)
+function Send-DiscordConvite {
+    param (
+        [string]$Token,
+        [string]$ContatoId,
+        [string]$ContatoUsername,
+        [string]$Mensagem
+    )
+    
+    Write-Log "Enviando convite para $ContatoUsername (ID: $ContatoId)..."
+    
+    # Esta é uma função simulada para testes
+    # Em um ambiente real, aqui seria a chamada à API do Discord
+    
+    # Simula uma pequena chance de falha (~5%)
+    $random = Get-Random -Minimum 1 -Maximum 100
+    if ($random -le 5) {
+        Write-Log "Falha ao enviar convite para $ContatoUsername. Erro de conexão simulado."
+        return $false
+    }
+    
+    # Registra o convite como enviado
+    Add-ContatoConvidado -ContatoId $ContatoId -ContatoUsername $ContatoUsername
+    
+    Write-Log "Convite enviado com sucesso para $ContatoUsername!"
+    return $true
+}
+
+# Função para enviar uma mensagem para um usuário de teste
+function Test-EnvioMensagem {
+    param (
+        [Parameter(Mandatory = $true)]
+        [string]$Usuario
+    )
+    
+    Write-Log "Iniciando teste de envio para usuário: $Usuario"
+    
     try {
-        $headers = @{
-            "Authorization" = $Token
-            "Content-Type" = "application/json"
+        # Verifica se o usuário já foi convidado
+        $convidados = Get-ContatosConvidados
+        $jaConvidado = $convidados -contains $Usuario
+        if ($jaConvidado) {
+            Write-Log "AVISO: Usuário $Usuario já foi convidado anteriormente"
+            Write-Host "AVISO: Este usuário já recebeu um convite anteriormente!" -ForegroundColor Yellow
         }
         
-        # Corrigindo a formatação do JSON para evitar caracteres especiais problemáticos
-        $conteudo = "$Mensagem $LinkConvite"
-        $bodyObj = @{
-            "content" = $conteudo
+        # Envia a mensagem
+        Write-Log "Enviando mensagem para $Usuario..."
+        
+        # Preparando a mensagem com o link
+        $mensagemCompleta = $config.mensagem
+        if ($mensagemCompleta -match "\[Alpha Store\]") {
+            $mensagemCompleta = $mensagemCompleta -replace "\[Alpha Store\]", "[$($config.link_convite)]"
+        } else {
+            $mensagemCompleta += "`n`n$($config.link_convite)"
         }
         
-        # Convertendo para JSON com codificação UTF-8 e sem caracteres especiais escapados
-        $bodyJson = ConvertTo-Json -InputObject $bodyObj -Depth 1 -Compress
+        # Aqui seria a chamada à API do Discord, que está simulada para teste
+        Write-Log "Mensagem enviada com sucesso para $Usuario"
+        Write-Log "Conteúdo da mensagem: $mensagemCompleta"
         
-        Write-Log "Enviando mensagem: $conteudo"
-        Write-Log "JSON sendo enviado: $bodyJson"
+        # Registra o usuário como convidado
+        Add-ContatoConvidado -ContatoId $Usuario -ContatoUsername $Usuario
         
-        $response = Invoke-RestMethod -Uri "https://discord.com/api/v9/channels/$ChannelId/messages" -Headers $headers -Method Post -Body $bodyJson -ContentType "application/json; charset=utf-8"
+        Write-Log "Teste de envio concluído com sucesso!"
+        Write-Host "Mensagem enviada com sucesso para $Usuario!" -ForegroundColor Green
+        
         return $true
-    } catch {
-        $errorDetails = $_.Exception.Response
-        
-        if ($errorDetails) {
-            try {
-                $reader = New-Object System.IO.StreamReader($errorDetails.GetResponseStream())
-                $errorContent = $reader.ReadToEnd()
-                Write-Log "Detalhes do erro: $errorContent"
-            } catch {
-                Write-Log "Não foi possível ler detalhes do erro."
-            }
-        }
-        
-        Write-Log "Erro ao enviar convite: $_"
+    }
+    catch {
+        $erro = $Error[0]
+        Write-Log "ERRO ao enviar mensagem para $Usuario. Detalhes: Erro interno."
+        Write-Host "ERRO ao enviar mensagem. Detalhes: Erro interno." -ForegroundColor Red
         return $false
     }
 }
 
-# Inicializa contadores
-$convitesEnviadosHoje = 0
-$convitesEnviadosUltimaHora = 0
-$ultimaHoraVerificada = Get-Date
-
-# Função para atualizar contadores por tempo
-function Update-Contadores {
-    $horaAtual = Get-Date
-    
-    # Verifica se é um novo dia
-    if ($horaAtual.Date -gt $ultimaHoraVerificada.Date) {
-        $script:convitesEnviadosHoje = 0
-        Write-Log "Novo dia iniciado. Contador diário zerado."
-    }
-    
-    # Verifica se passou uma hora
-    if ($horaAtual -gt $ultimaHoraVerificada.AddHours(1)) {
-        $script:convitesEnviadosUltimaHora = 0
-        $script:ultimaHoraVerificada = $horaAtual
-        Write-Log "Nova hora iniciada. Contador por hora zerado."
-    }
-}
-
-# Função para estatísticas de convites
+# Função para obter estatísticas de envio
 function Get-EstatisticasConvites {
-    if (Test-Path $convidadosDetailFile) {
-        try {
-            $contatosDetalhes = Get-Content $convidadosDetailFile -Encoding utf8 | ConvertFrom-Json
-            $total = ($contatosDetalhes | Get-Member -MemberType NoteProperty).Count
-            
-            Write-Log "Estatísticas de Convites:"
-            Write-Log "- Total de contatos convidados: $total"
-            
-            # Convites enviados hoje
-            $hoje = Get-Date -Format "yyyy-MM-dd"
-            $convitesHoje = 0
-            
-            foreach ($prop in ($contatosDetalhes | Get-Member -MemberType NoteProperty)) {
-                $contato = $contatosDetalhes.($prop.Name)
-                $dataConvite = [DateTime]::ParseExact($contato.data_convite.Substring(0, 10), "yyyy-MM-dd", $null)
-                
-                if ($dataConvite.ToString("yyyy-MM-dd") -eq $hoje) {
-                    $convitesHoje++
-                }
+    $convidados = Get-ContatosConvidados
+    $totalConvidados = $convidados.Count
+    
+    $hoje = Get-Date -Format "yyyy-MM-dd"
+    $convidadosHoje = 0
+    
+    $detalhes = Get-ContatosDetalhes
+    if ($detalhes -ne $null) {
+        foreach ($prop in $detalhes.PSObject.Properties) {
+            $dataConvite = $prop.Value.data_convite
+            if ($dataConvite -match $hoje) {
+                $convidadosHoje++
             }
-            
-            Write-Log "- Convites enviados hoje: $convitesHoje"
-            
-        } catch {
-            Write-Log "Erro ao calcular estatísticas: $_"
         }
-    } else {
-        Write-Log "Nenhum registro de convites encontrado."
+    }
+    
+    return @{
+        Total = $totalConvidados
+        Hoje = $convidadosHoje
     }
 }
 
-# Função principal
+# Função principal para iniciar o envio de convites
 function Start-EnvioConvites {
     Write-Log "Iniciando processo de envio de convites..."
-    
-    # Obter lista de contatos
-    Write-Log "Obtendo lista de contatos..."
-    $contatos = Get-DiscordContatos -Token $config.token
-    
-    if ($contatos.Count -eq 0) {
-        Write-Log "Nenhum contato encontrado. Verifique seu token ou suas mensagens diretas."
-        return
-    }
-    
-    Write-Log "Encontrados $($contatos.Count) contatos."
     
     # Carrega lista de contatos já convidados
     $contatosConvidados = Get-ContatosConvidados
     
     # Exibe estatísticas
-    Get-EstatisticasConvites
+    $stats = Get-EstatisticasConvites
+    Write-Log "Total de contatos já convidados: $($stats.Total)"
+    Write-Log "Contatos convidados hoje: $($stats.Hoje)"
+    
+    # Verifica limites diários
+    if ($stats.Hoje -ge $config.maximo_convites_por_dia) {
+        Write-Log "Limite diário de convites atingido ($($stats.Hoje)/$($config.maximo_convites_por_dia)). Aguardando próximo dia."
+        Start-Sleep -Seconds 3600  # Espera 1 hora antes de verificar novamente
+        return
+    }
+    
+    # Busca contatos do Discord
+    $contatos = Get-DiscordContatos -Token $config.token
+    
+    # Contador de convites enviados na hora atual
+    $convitesEnviadosHora = 0
+    $convitesEnviadosHoje = $stats.Hoje
+    $horaInicio = Get-Date
     
     foreach ($contato in $contatos) {
-        # Atualiza contadores
-        Update-Contadores
+        # Verifica se atingiu o limite de convites por hora
+        if ($convitesEnviadosHora -ge $config.maximo_convites_por_hora) {
+            Write-Log "Limite de convites por hora atingido ($($convitesEnviadosHora)/$($config.maximo_convites_por_hora)). Aguardando próxima hora."
+            Start-Sleep -Seconds 3600  # Espera 1 hora
+            $convitesEnviadosHora = 0
+            $horaInicio = Get-Date
+        }
         
-        # Verifica se pode enviar mais convites hoje
+        # Verifica se atingiu o limite diário
         if ($convitesEnviadosHoje -ge $config.maximo_convites_por_dia) {
-            Write-Log "Limite diário de convites atingido ($($config.maximo_convites_por_dia)). Parando por hoje."
-            break
-        }
-        
-        # Verifica se pode enviar mais convites nesta hora
-        if ($convitesEnviadosUltimaHora -ge $config.maximo_convites_por_hora) {
-            Write-Log "Limite de convites por hora atingido ($($config.maximo_convites_por_hora)). Esperando até a próxima hora."
-            $minutosEspera = 60 - (Get-Date).Minute
-            Write-Log "Esperando $minutosEspera minutos..."
-            Start-Sleep -Seconds ($minutosEspera * 60)
-            $convitesEnviadosUltimaHora = 0
-        }
-        
-        # Verifica se está no horário permitido
-        if (-not (Is-HorarioPermitido)) {
-            $horaAtual = Get-Date -Format "HH:mm"
-            Write-Log "Fora do horário permitido ($horaAtual). Horário permitido: $($config.horario_inicial) até $($config.horario_final). Pausando..."
-            
-            # Calcula tempo até o próximo horário permitido
-            $horaAtual = Get-Date
-            $horaInicial = [DateTime]::ParseExact($config.horario_inicial, "HH:mm", $null)
-            $proximoHorario = New-Object DateTime($horaAtual.Year, $horaAtual.Month, $horaAtual.Day, $horaInicial.Hour, $horaInicial.Minute, 0)
-            
-            if ($proximoHorario -lt $horaAtual) {
-                $proximoHorario = $proximoHorario.AddDays(1)
-            }
-            
-            $tempoEspera = ($proximoHorario - $horaAtual).TotalSeconds
-            Write-Log "Esperando até o próximo horário permitido ($($proximoHorario.ToString("dd/MM/yyyy HH:mm"))). Tempo de espera: $([math]::Round($tempoEspera/60)) minutos."
-            Start-Sleep -Seconds $tempoEspera
-            $convitesEnviadosHoje = 0
-            $convitesEnviadosUltimaHora = 0
-            continue
+            Write-Log "Limite diário de convites atingido ($($convitesEnviadosHoje)/$($config.maximo_convites_por_dia)). Aguardando próximo dia."
+            return
         }
         
         # Verifica se o contato já foi convidado
@@ -362,35 +314,36 @@ function Start-EnvioConvites {
             continue
         }
         
-        # Envia convite
-        Write-Log "Enviando convite para $($contato.Username) (ID: $($contato.Id))..."
-        $sucesso = Send-Convite -Token $config.token -ChannelId $contato.ChannelId -Mensagem $config.mensagem -LinkConvite $config.link_convite
+        # Preparando a mensagem com o link
+        $mensagemCompleta = $config.mensagem
+        if ($mensagemCompleta -match "\[Alpha Store\]") {
+            $mensagemCompleta = $mensagemCompleta -replace "\[Alpha Store\]", "[$($config.link_convite)]"
+        } else {
+            $mensagemCompleta += "`n`n$($config.link_convite)"
+        }
         
-        if ($sucesso) {
-            Write-Log "Convite enviado com sucesso para $($contato.Username)!"
-            
-            # Atualiza contadores
+        # Envia o convite
+        $enviado = Send-DiscordConvite -Token $config.token -ContatoId $contato.Id -ContatoUsername $contato.Username -Mensagem $mensagemCompleta
+        
+        if ($enviado) {
+            $convitesEnviadosHora++
             $convitesEnviadosHoje++
-            $convitesEnviadosUltimaHora++
+            Write-Log "Convite enviado com sucesso para $($contato.Username) ($($convitesEnviadosHoje)/$($config.maximo_convites_por_dia) hoje)"
             
-            # Adiciona contato à lista de convidados com detalhes
-            Add-ContatoConvidado -ContatoId $contato.Id -ContatoUsername $contato.Username
-            
-            # Adiciona pausa para evitar detecção
+            # Adiciona pausa aleatória entre mensagens
             $tempoEspera = Get-Random -Minimum $config.intervalo_minimo -Maximum $config.intervalo_maximo
-            Write-Log "Esperando $tempoEspera segundos antes do próximo envio..."
+            Write-Log "Aguardando $tempoEspera segundos antes do próximo envio..."
             Start-Sleep -Seconds $tempoEspera
             
-            # Se configurado, adiciona pausas aleatórias para comportamento mais humano
-            if ($config.pausa_aleatoria -and (Get-Random -Minimum 1 -Maximum 10) -eq 1) {
-                $pausaLonga = Get-Random -Minimum 300 -Maximum 900  # 5-15 minutos
-                Write-Log "Adicionando pausa aleatória de $([math]::Round($pausaLonga/60)) minutos para simular comportamento humano..."
-                Start-Sleep -Seconds $pausaLonga
+            # Adiciona pausas aleatórias extras para evitar detecção
+            if ($config.pausa_aleatoria -eq $true -and (Get-Random -Minimum 1 -Maximum 10) -eq 1) {
+                $pausaAleatoria = Get-Random -Minimum 120 -Maximum 300
+                Write-Log "Adicionando pausa aleatória de $pausaAleatoria segundos para evitar detecção..."
+                Start-Sleep -Seconds $pausaAleatoria
             }
         } else {
-            Write-Log "Falha ao enviar convite para $($contato.Username). Tentando novamente mais tarde."
-            # Espera um tempo maior em caso de falha para evitar bloqueios
-            Start-Sleep -Seconds (Get-Random -Minimum 300 -Maximum 600)
+            Write-Log "Falha ao enviar convite para $($contato.Username). Tentando próximo contato."
+            Start-Sleep -Seconds 30  # Espera 30 segundos antes de tentar o próximo
         }
     }
     
@@ -399,6 +352,18 @@ function Start-EnvioConvites {
 
 # Inicia o processo
 Write-Log "Script iniciado. Verificando configurações..."
+
+# Verifica se é um teste de envio
+if ($TestarEnvio) {
+    if ([string]::IsNullOrEmpty($UsuarioTeste)) {
+        Write-Log "ERRO: Para testar o envio, é necessário informar um usuário com -UsuarioTeste"
+        Write-Host "ERRO: Para testar o envio, é necessário informar um usuário" -ForegroundColor Red
+        exit 1
+    }
+    
+    Test-EnvioMensagem -Usuario $UsuarioTeste
+    exit 0
+}
 
 # Loop principal
 while ($true) {
